@@ -13,7 +13,7 @@ app = FastAPI()
 token_listener = JWTBearer()
 
 # TODO: add specific origins here
-origins = ["http://localhost:3030/", "https://www.theoreka.com/"]
+origins = ["http://localhost:3030/", "https://www.theoreka.com/", "https://theoreka.com/"]
 
 app.add_middleware(
   CORSMiddleware,
