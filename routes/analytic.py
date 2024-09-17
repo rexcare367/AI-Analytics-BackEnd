@@ -117,19 +117,13 @@ async def upload_file(id: PydanticObjectId, file: UploadFile = File(...)):
     try:
         file_data = file.file.read()
         
-        # file_folder = os.path.join(os.getcwd(), 'static/files')
-        # if not os.path.exists(file_folder):
-        #     os.makedirs(file_folder)
-        # filepath = os.path.join(file_folder, filename)
         S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=filename,  Body=file_data)
-        # with open(filepath, 'wb') as f:
-        #     f.write(contents)
     except Exception as e:
         print(e)
         return {
             "status_code": 500,
             "response_type": "error",
-            "data": 'file',
+            "data": f"There was an error uploading the file - {e}",
             "description": "There was an error uploading the file"
         }
     finally:
@@ -476,7 +470,6 @@ async def draw_insights(id: PydanticObjectId):
         "description": "An error occurred while updating {} analytic data. ".format(id),
         "data": False,
     }
-
 
 
 ##########################################
