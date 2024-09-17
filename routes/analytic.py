@@ -117,10 +117,10 @@ async def upload_file(id: PydanticObjectId, file: UploadFile = File(...)):
     try:
         file_data = file.file.read()
         
-        file_folder = os.path.join(os.getcwd(), 'static/files')
-        if not os.path.exists(file_folder):
-            os.makedirs(file_folder)
-        filepath = os.path.join(file_folder, filename)
+        # file_folder = os.path.join(os.getcwd(), 'static/files')
+        # if not os.path.exists(file_folder):
+        #     os.makedirs(file_folder)
+        # filepath = os.path.join(file_folder, filename)
         S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=filename,  Body=file_data)
         # with open(filepath, 'wb') as f:
         #     f.write(contents)
