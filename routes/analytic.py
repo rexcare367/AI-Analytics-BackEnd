@@ -144,7 +144,7 @@ async def handle_clean_file(id: PydanticObjectId):
             {
                 "type": "text",
                 "text": """
-                            Please convert an xlsx or similar file to a .csv file for data analytics. Follow these steps:
+                            You're given an xlsx or something other format file. Please convert that file to a .csv file for data analytics. Follow these steps:
 
                             1. Examine the first few rows to identify proper column names. Note that the first line is often not the header, and column names may be found in the second or third line.
 
@@ -300,13 +300,16 @@ async def handle_draw_insights(id: PydanticObjectId):
                 {
                     "type": "text",
                     "text": """
-                                I am planning to develop a data analytics platform that features advanced charts and graphs including
-                                Heat Maps, Tree Maps, Sunburst Charts, Sankey Diagrams, Radar Charts (Spider Charts), Waterfall Charts, Candlestick Charts, Box Plots (Box-and-Whisker Plots), Violin Plots, Parallel Coordinate Plots, Contour Plots, Bullet Graphs, Stream Graphs, Bubble Charts, Network Graphs, line+bar chart,
+                                I am planning to develop a data analytics platform that features advanced charts and graphs.
 
                                 To begin:
 
-                                Formulate two complex questions that will be used to draw insights and provide detailed solutions.
-                                Generate visual insights based on these questions and save them as image files.
+                                Formulate 4 complex questions that are needed to draw insights then provide detailed solutions.
+                                Generate visual insights (width: 1000px, height: 600px) based on these questions and save them as image files.
+
+                                - one should be group of 1 pie chart and 1 line chart
+                                - one should be groupd of 2 chart combined with line and bar
+                                - other 2 should be something other graphs such as sunburst, violin, tree, prisma flow chart, geomap.
                             """
                 },
             ]
