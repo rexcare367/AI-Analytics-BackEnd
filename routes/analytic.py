@@ -225,7 +225,7 @@ async def handle_clean_file(id: PydanticObjectId):
         update_data["status"] = {
             
             "current": "cleaned",
-            "cleaned": {"status" : run.status,"message": [res_message], "attachments": cleaned_file}
+            "cleaned": {"status" : run.status,"message": res_message, "attachments": cleaned_file}
         }
         update_data["cleaned_file"] = cleaned_file
         
