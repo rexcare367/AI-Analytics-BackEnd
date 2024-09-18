@@ -202,27 +202,27 @@ async def clean_file(id: PydanticObjectId):
             {
                 "type": "text",
                 "text": """
-                            You're given an xlsx or something other format file. 
-                            Please convert this file to .csv file for data analytics. 
-                            Examine the first few rows of the file to infer the proper column names. 
-                            Note that the first line is often not the column name, and sometimes the second or third line contains the column names. 
-                            Column name should be mostly same as before
-                            Even column field is empty, if below fields are filled with some values following a fomular, you can make a name like "No", "Date".
-                            Here are some example
-                                - previous : column name: "HB" and field value: "HB: 35" 
-                            after: column name: "HB" and field value: "35"
-                                - previous : column name: "HB / HCT" and field value is {"HB: 35, HCT:20"}, or {"HB: 35 / HCT:20"} or {"hb: 35, hct:20"} or {"HB: 35", next line:  "HCT:20"}
-                            after: column name: "HB" and field value: "35", column name: "HCT" and field value: "20"
-                                - previous : column name is "BMI (early/ pre-pregnancy)" and field value is "40.1 / 46.6" 
-                            after: column name is "BMI: early" and field value is "40.1", column name is "BMI: pre-pregnancy" and field value is "46.6"
-                            Ensure that each column's data type matches its inferred column name. 
-                            Translate all words in english.
-                            All characters should be english.
-                            You can remove that string according to the meaning of the word.
-                            Standardize the data:
-                                - Ensure all values are consistent and correctly matched.
-                                - Ensure all rows are converted
-                            While converting don't miss the quotation mark by using those attributes - quotechar='"', quoting=csv.QUOTE_NONNUMERIC
+                            Please convert an xlsx or similar file to a .csv file for data analytics. Follow these steps:
+
+                            1. Examine the first few rows to identify proper column names. Note that the first line is often not the header, and column names may be found in the second or third line.
+
+                            2. Maintain column names as close to the originals as possible.
+
+                            3. If a column name is missing but its fields follow a pattern (e.g., dates, numbers), assign a suitable name like “No” or “Date”.
+
+                            4. Adjust column names and split fields if needed:
+
+                              - Example: Column name: "HB", Field value: "HB: 35". Transform to Column name: "HB", Field value: "35".
+                              - Example: Column name: "HB / HCT", Field value: {"HB: 35, HCT: 20"}. Transform to Column name: "HB", Field value: "35" and Column name: "HCT", Field value: "20".
+                              - Example: Column name: "BMI (early/ pre-pregnancy)", Field value: "40.1 / 46.6". Transform to Column name: "BMI: early", Field value: "40.1" and Column name: "BMI: pre-pregnancy", Field value: "46.6".
+                            
+                            5. Ensure each column's data type matches its inferred column name.
+
+                            6 Translate all text to English and ensure all characters are in English.
+                            7 Standardize the data:
+                              - Ensure all values are consistent and correctly matched.
+                              - Ensure all rows are converted.
+                            8. During conversion, use quotechar='"' and quoting=csv.QUOTE_NONNUMERIC to preserve quotation marks where needed.
                         """
             },
             # {
@@ -348,10 +348,13 @@ async def handle_draw_insights(id: PydanticObjectId):
                 {
                     "type": "text",
                     "text": """
-                                I am going to build a data analytics platform with advanced charts, graphs.
-                                To draw them
-                                - first, make 2 complex questions with solutions.
-                                - then, draw and save as image insights based on those questions.
+                                I am planning to develop a data analytics platform that features advanced charts and graphs including
+                                Heat Maps, Tree Maps, Sunburst Charts, Sankey Diagrams, Radar Charts (Spider Charts), Waterfall Charts, Candlestick Charts, Box Plots (Box-and-Whisker Plots), Violin Plots, Parallel Coordinate Plots, Contour Plots, Bullet Graphs, Stream Graphs, Bubble Charts, Network Graphs, line+bar chart,
+
+                                To begin:
+
+                                Formulate two complex questions that will be used to draw insights and provide detailed solutions.
+                                Generate visual insights based on these questions and save them as image files.
                             """
                 },
             ]
@@ -422,6 +425,17 @@ async def handle_draw_insights(id: PydanticObjectId):
             "current": "insights ready",
             "message": res_message,
             "insights": insights_file
+        }
+        
+        updated_analytic = await update_analytic_data(id, update_data)
+        print("updated_analytic: ", updated_analytic)
+    elif run.status == 'incomplete':
+        print("=============run.status: ", run.status)
+        print("=============run: ", run)
+        update_data = dict(exclude_unset=True)
+        update_data["status"] = {
+            "current": "insights ready",
+            "message": [f"Result: {run.status}"],
         }
         
         updated_analytic = await update_analytic_data(id, update_data)
