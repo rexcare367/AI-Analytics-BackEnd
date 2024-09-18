@@ -23,58 +23,6 @@ S3_CLIENT = boto3.client(
 S3_PRIVATE_BUCKET = settings.S3_PRIVATE_BUCKET
 S3_PUBLIC_BUCKET = settings.S3_PUBLIC_BUCKET
 
-def create_chart(user_message, execute=True):
-    """
-    Generates Python code based on user message and optionally executes it.
-
-    Args:
-        user_message (str): User's message.
-        execute (bool): Whether to execute the generated code.
-
-    Returns:
-        str: Generated Python code.
-    """
-    system_message = """
-    You are a Python code generator familiar with pandas. Respond to every question with Python code.
-    Wrap your code in ``` delimiters. Import any necessary Python modules. Do not provide elaborations.
-    """
-
-    response_content = generate_chat_response(system_message, user_message)  # Generate response
-    print("response_content: ", response_content)
-    code = extract_code(response_content)  # Extract code from response
-    print("code: ", code)
-    if execute:
-        exec(code, globals())  # Execute the code if execute flag is True
-
-    return code  # Return the generated code
-
-def create_query(user_message, execute=True):
-    """
-    Generates Python code based on user message and optionally executes it.
-
-    Args:
-        user_message (str): User's message.
-        execute (bool): Whether to execute the generated code.
-
-    Returns:
-        str: Generated Python code.
-    """
-    system_message = """
-    You are a Python code generator familiar with pandas. Respond to every question with Python code.
-    Wrap your code in ``` delimiters. Import any necessary Python modules. Do not provide elaborations.
-    """
-
-    response_content = generate_chat_response(system_message, user_message)  # Generate response
-    print("response_content ", response_content)
-
-    code = extract_code(response_content)  # Extract code from response
-    print("code ", code)
-
-    if execute:
-        exec(code, globals())  # Execute the code if execute flag is True
-
-    return code  # Return the generated code
-
 ##########################
 ######### Routes #########
 ##########################
@@ -179,14 +127,8 @@ async def upload_file(id: PydanticObjectId, file: UploadFile = File(...)):
         "data": False,
     }
 
-@router.post(
-    "/clean_file/{id}",
-    response_description="Your file is cleaned successfully",
-    response_model=Response,
-)
-async def clean_file(id: PydanticObjectId):
-    
-    # retrieve analytic row
+async def handle_clean_file(id: PydanticObjectId):
+# retrieve analytic row
     analytic_row = await retrieve_analytic(id)
     
     threadId = analytic_row.threadId
@@ -264,28 +206,6 @@ async def clean_file(id: PydanticObjectId):
                                     text_value += f"\nDownloaded CSV file: {file_path}"
                         response = f"Assistant says: {text_value}"
                         print(response)
-                        # Save the response to a file
-                        # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                        # with open(response_file, 'w') as file:
-                        #     file.write(response)
-                    elif content_item.type == 'image_file':
-                        file_id = content_item.image_file.file_id
-                        print(f"Attempting to download image file with ID: {file_id}")
-                        file_data = client.files.content(file_id)
-                        image_file = f"{file_id}.png"
-                        file_name = os.path.abspath( f"{file_id}.png")
-                        image_folder = os.path.join(os.getcwd(), 'static/images')
-                        if not os.path.exists(image_folder):
-                            os.makedirs(image_folder)
-                        file_path = os.path.join(image_folder, image_file)
-                        # with open(file_path, "wb") as file:
-                        #     file.write(file_data.read())
-                        response = f"Assistant says: Saved image file to {file_path}"
-                        print(response)
-                        # Save the response to a file
-                        # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                        # with open(response_file, 'w') as file:
-                        #     file.write(response)
                     else:
                         response = "Assistant says: Unhandled content type."
                         print(response)
@@ -300,44 +220,76 @@ async def clean_file(id: PydanticObjectId):
                 # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
                 # with open(response_file, 'w') as file:
                 #     file.write(response)
+
+        update_data = dict(exclude_unset=True)
+        update_data["status"] = {
+            
+            "current": "cleaned",
+            "cleaned": {"status" : run.status,"message": [res_message], "attachments": cleaned_file}
+        }
+        update_data["cleaned_file"] = cleaned_file
+        
+        updated_analytic = await update_analytic_data(id, update_data)
+        print("updated_analytic: ", updated_analytic)
+    elif run.status == 'incomplete':
+        print("=============run.status: ", run.status)
+        print("=============run: ", run)
+
+        update_data = dict(exclude_unset=True)
+        update_data["status"] = {
+            
+            "current": "cleaned",
+            "cleaned": {"status" : run.status,"message": [f"Result: {run.status}"], "attachments": cleaned_file}
+        }
+        update_data["cleaned_file"] = ""
+        
+        updated_analytic = await update_analytic_data(id, update_data)
+        print("updated_analytic: ", updated_analytic)
     else:
         print("=============run.status: ", run.status)
-        print("=============run.last_error.message: ", run.last_error.message)
-        return {
-            "status_code": 500,
-            "response_type": "error",
-            "description": "An error occurred while cleanning file for {}".format(id),
-            "data": [f"Result: {run.status} \n {run.last_error.message}"],
-        }
+        print("=============run: ", run)
 
-    # update analytic data
+        update_data = dict(exclude_unset=True)
+        update_data["status"] = {
+            "current": "cleaned",
+            "cleaned": {"status" : run.status,"message": [f"Result: {run.status} \n {run.last_error.message}"], "attachments": cleaned_file}
+        }
+        update_data["cleaned_file"] = ""
+        
+        updated_analytic = await update_analytic_data(id, update_data)
+        print("updated_analytic: ", updated_analytic)
+
+@router.post(
+    "/clean_file/{id}",
+    response_description="Your file is cleaned successfully",
+    response_model=Response,
+)
+async def clean_file(id: PydanticObjectId, background_tasks:BackgroundTasks):
+    
     update_data = dict(exclude_unset=True)
-    update_data["cleaned_file"] = cleaned_file
-    update_data["status"] = 'cleaned'
+    update_data["status"] = {
+        "current": "uploaded",
+        "cleaned": {"message": [], "attachments": ""}
+    }
+    update_data["cleaned_file"] = ""
     
     updated_analytic = await update_analytic_data(id, update_data)
-
-    if updated_analytic:
-         return {
-            "status_code": 200,
-            "response_type": "success",
-            "data": res_message,
-            "description": f"Successfully File is cleaned and converted to {cleaned_file}"
-        }
+    print("updated_analytic: ", updated_analytic)
+    
+    background_tasks.add_task(handle_clean_file, id)
+    
     return {
-        "status_code": 500,
-        "response_type": "error",
-        "description": "An error occurred while cleanning file for {}".format(id),
-        "data": "Error occurred while cleanning file for {}".format(id),
+        "status_code": 200,
+        "response_type": "success",
+        "data": "Started to clean data",
+        "description": f"Started to clean data"
     }
-
+    
 async def handle_draw_insights(id: PydanticObjectId):
     analytic_row = await retrieve_analytic(id)
-    # cleanedFileId = analytic_row.cleaned_file
     threadId = analytic_row.threadId
     assistantId = analytic_row.assistantId
     print(f"threadId: {threadId}, assistantId: {assistantId}")
-    cleaned_file=""
     res_message=[]
     insights_file=[]    
     
@@ -421,11 +373,12 @@ async def handle_draw_insights(id: PydanticObjectId):
                 #     file.write(response)
 
         update_data = dict(exclude_unset=True)
-        update_data["status"] = {
-            "current": "insights ready",
-            "message": res_message,
-            "insights": insights_file
-        }
+                
+        _status = analytic_row.status
+        _status["current"] = "insights ready"
+        _status["message"] =  res_message
+        _status["insights"] =  insights_file
+        update_data["status"] = _status
         
         updated_analytic = await update_analytic_data(id, update_data)
         print("updated_analytic: ", updated_analytic)
@@ -433,49 +386,25 @@ async def handle_draw_insights(id: PydanticObjectId):
         print("=============run.status: ", run.status)
         print("=============run: ", run)
         update_data = dict(exclude_unset=True)
-        update_data["status"] = {
-            "current": "insights ready",
-            "message": [f"Result: {run.status}"],
-        }
+        _status = analytic_row.status
+        _status["current"] = "insights ready"
+        _status["message"] =  [f"Result: {run.status}"]
+        update_data["status"] = _status
         
         updated_analytic = await update_analytic_data(id, update_data)
         print("updated_analytic: ", updated_analytic)
     else:
         print("=============run.status: ", run.status)
         print("=============run.last_error.message: ", run.last_error.message)
-        # return {
-        #     "status_code": 429,
-        #     "response_type": "error",
-        #     "description": "An error occurred while processing {}".format(id),
-        #     "data": {"message":[f"Result: {run.status} \n {run.last_error.message}"]},
-        # }
 
         update_data = dict(exclude_unset=True)
-        update_data["status"] = {
-            "current": "insights ready",
-            "message": [f"Result: {run.status} \n {run.last_error.message}"],
-        }
+        _status = analytic_row.status
+        _status["current"] = "insights ready"
+        _status["message"] = [f"Result: {run.status} \n {run.last_error.message}"]
+        update_data["status"] = _status
         
         updated_analytic = await update_analytic_data(id, update_data)
         print("updated_analytic: ", updated_analytic)
-    # if updated_analytic:
-    #     return {
-    #         "status_code": 200,
-    #         "response_type": "success",
-    #         "data": {
-    #             "message": res_message,
-    #             "insights": insights_file
-    #         },
-    #         "description": f"Successfully draw insights"
-    #     }
-    # return {
-    #     "status_code": 500,
-    #     "response_type": "error",
-    #     "description": "An error occurred while updating {} analytic data. ".format(id),
-    #     "data": {
-    #             "message": "An error occurred while updating {} analytic data. ".format(id),
-    #         },
-    # }
 
 @router.post(
     "/draw_insights/{id}",
@@ -483,10 +412,15 @@ async def handle_draw_insights(id: PydanticObjectId):
     response_model=Response,
 )
 async def draw_insights(id: PydanticObjectId, background_tasks: BackgroundTasks):
+    analytic_row = await retrieve_analytic(id)
     update_data = dict(exclude_unset=True)
-    update_data["status"] = {
-        "current": "file loaded",
-    }
+    _status = analytic_row.status
+    if "message" in _status:
+        del _status["message"]
+    if "insights" in _status:
+        del _status["insights"]
+    _status["current"] =  "cleaned"
+    update_data["status"] = _status
     
     await update_analytic_data(id, update_data)
     
@@ -495,8 +429,8 @@ async def draw_insights(id: PydanticObjectId, background_tasks: BackgroundTasks)
     return {
         "status_code": 200,
         "response_type": "success",
-        "data": "Successfully started to draw insights",
-        "description": f"Successfully started to draw insights"
+        "data": "Started to draw insights",
+        "description": f"Started to draw insights"
     }
 
 ##########################################
