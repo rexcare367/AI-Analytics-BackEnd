@@ -246,9 +246,7 @@ async def clean_file(id: PydanticObjectId):
 
     if run.status == 'completed':
         print("Run completed successfully. Processing messages.")
-        messages = client.beta.threads.messages.list(thread_id=run.thread_id)
-        # res_message=messages.data[-2].content[0].text.value
-        # print('*********************', res_message)
+        messages = client.beta.threads.messages.list(thread_id=run.thread_id, run_id=run.id)
         for msg in messages.data:
             if msg.role == "assistant":
                 for content_item in msg.content: 
@@ -262,15 +260,8 @@ async def clean_file(id: PydanticObjectId):
                                     print(f"Attempting to download file with ID: {file_id}")
                                     file_data = client.files.content(file_id)
                                     cleaned_file = f"{file_id}.csv"
-                                    file_name = os.path.abspath( f"{file_id}.csv")
-                                    clean_file_folder = os.path.join(os.getcwd(), 'static/cleanFiles')
-                                    if not os.path.exists(clean_file_folder):
-                                        os.makedirs(clean_file_folder)
-                                    # file_path = os.path.join(clean_file_folder, cleaned_file)
-                                    S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=file_id,  Body=file_data.read())
-                                    # with open(file_path, "wb") as file:
-                                    #     file.write(file_data.read())
-                                    text_value += f"\nDownloaded CSV file: {file_name}"
+                                    file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=cleaned_file,  Body=file_data.read())
+                                    text_value += f"\nDownloaded CSV file: {file_path}"
                         response = f"Assistant says: {text_value}"
                         print(response)
                         # Save the response to a file
@@ -310,9 +301,10 @@ async def clean_file(id: PydanticObjectId):
                 # with open(response_file, 'w') as file:
                 #     file.write(response)
     else:
-        print(run.status)
+        print("=============run.status: ", run.status)
+        print("=============run.last_error: ", run.last_error)
         return {
-            "status_code": 404,
+            "status_code": 500,
             "response_type": "error",
             "description": "An error occurred while cleanning file for {}".format(id),
             "data": run.last_error,
@@ -336,7 +328,7 @@ async def clean_file(id: PydanticObjectId):
         "status_code": 500,
         "response_type": "error",
         "description": "An error occurred while cleanning file for {}".format(id),
-        "data": False,
+        "data": "Error occurred while cleanning file for {}".format(id),
     }
 
 @router.post(
@@ -352,19 +344,19 @@ async def draw_insights(id: PydanticObjectId):
     res_message=[]
     insights_file=[]    
     message = client.beta.threads.messages.create(
-    thread_id=threadId,
-    role="user",
-    content=[
-            {
-                "type": "text",
-                "text": """
-                            I am going to build a data analytics platform with advanced charts, graphs.
-                            To draw them
-                            - first, make 2 complex questions with solutions.
-                            - then, draw and save as image insights based on those questions.
-                        """
-            },
-        ]
+        thread_id=threadId,
+        role="user",
+        content=[
+                {
+                    "type": "text",
+                    "text": """
+                                I am going to build a data analytics platform with advanced charts, graphs.
+                                To draw them
+                                - first, make 2 complex questions with solutions.
+                                - then, draw and save as image insights based on those questions.
+                            """
+                },
+            ]
     )
 
     run = client.beta.threads.runs.create_and_poll(
@@ -375,7 +367,7 @@ async def draw_insights(id: PydanticObjectId):
 
     if run.status == 'completed':
         print("Run completed successfully. Processing messages.")
-        messages = client.beta.threads.messages.list(thread_id=run.thread_id)
+        messages = client.beta.threads.messages.list(thread_id=run.thread_id, run_id=run.id)
         for msg in messages.data:
             if msg.role == "assistant":
                 for content_item in msg.content:
@@ -407,17 +399,9 @@ async def draw_insights(id: PydanticObjectId):
                         file_id = content_item.image_file.file_id
                         print(f"Attempting to download image file with ID: {file_id}")
                         file_data = client.files.content(file_id)
-                        # file_path = os.path.abspath( f"{file_id}.png")
                         image_file = f"{file_id}.png"
-                        file_name = os.path.abspath( f"{file_id}.png")
-                        image_folder = os.path.join(os.getcwd(), 'static/images')
-                        if not os.path.exists(image_folder):
-                            os.makedirs(image_folder)
-                        file_path = os.path.join(image_folder, image_file)
                         insights_file.insert(0, image_file)
-                        S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
-                        # with open(file_path, "wb") as file:
-                        #     file.write(file_data.read())
+                        file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
                         response = f"Assistant says: Saved image file to {file_path}"
                         print(response)
                         # Save the response to a file
@@ -444,8 +428,8 @@ async def draw_insights(id: PydanticObjectId):
         return {
             "status_code": 404,
             "response_type": "error",
-            "description": "An error occurred. Student with ID: {} not found".format(id),
-            "data": False,
+            "description": "An error occurred while processing { }".format(id),
+            "data": f"Result: {run.status} \n {run.last_error}",
         }
 
     update_data = dict(exclude_unset=True)
