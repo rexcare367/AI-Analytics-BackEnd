@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, File, UploadFile
+from fastapi import APIRouter, Body, File, UploadFile, BackgroundTasks
 from openai import OpenAI
 from datetime import datetime
 import boto3
@@ -259,8 +259,8 @@ async def clean_file(id: PydanticObjectId):
                                     file_id = annotation.file_path.file_id
                                     print(f"Attempting to download file with ID: {file_id}")
                                     file_data = client.files.content(file_id)
-                                    cleaned_file = f"{file_id}.csv"
-                                    file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=cleaned_file,  Body=file_data.read())
+                                    cleaned_file = file_id
+                                    file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=f"{file_id}.csv",  Body=file_data.read())
                                     text_value += f"\nDownloaded CSV file: {file_path}"
                         response = f"Assistant says: {text_value}"
                         print(response)
@@ -302,12 +302,12 @@ async def clean_file(id: PydanticObjectId):
                 #     file.write(response)
     else:
         print("=============run.status: ", run.status)
-        print("=============run.last_error: ", run.last_error)
+        print("=============run.last_error.message: ", run.last_error.message)
         return {
             "status_code": 500,
             "response_type": "error",
             "description": "An error occurred while cleanning file for {}".format(id),
-            "data": run.last_error,
+            "data": [f"Result: {run.status} \n {run.last_error.message}"],
         }
 
     # update analytic data
@@ -331,18 +331,16 @@ async def clean_file(id: PydanticObjectId):
         "data": "Error occurred while cleanning file for {}".format(id),
     }
 
-@router.post(
-    "/draw_insights/{id}",
-    response_description="load_data successfully",
-    response_model=Response,
-)
-async def draw_insights(id: PydanticObjectId):
+async def handle_draw_insights(id: PydanticObjectId):
     analytic_row = await retrieve_analytic(id)
+    # cleanedFileId = analytic_row.cleaned_file
     threadId = analytic_row.threadId
     assistantId = analytic_row.assistantId
+    print(f"threadId: {threadId}, assistantId: {assistantId}")
     cleaned_file=""
     res_message=[]
     insights_file=[]    
+    
     message = client.beta.threads.messages.create(
         thread_id=threadId,
         role="user",
@@ -380,14 +378,10 @@ async def draw_insights(id: PydanticObjectId):
                                     file_id = annotation.file_path.file_id
                                     print(f"Attempting to download file with ID: {file_id}")
                                     file_data = client.files.content(file_id)
-                                    cleaned_file = f"{file_id}.csv"
+                                    image_file = f"{file_id}.png"
                                     file_name = os.path.abspath( f"{file_id}.csv")
-                                    clean_file_folder = os.path.join(os.getcwd(), 'static/cleanFiles')
-                                    if not os.path.exists(clean_file_folder):
-                                        os.makedirs(clean_file_folder)
-                                    # file_path = os.path.join(clean_file_folder, cleaned_file)
-                                    # with open(file_path, "wb") as file:
-                                    #     file.write(file_data.read())
+                                    file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
+                                    insights_file.insert(0, image_file)
                                     text_value += f"\nDownloaded CSV file: {file_name}"
                         response = f"Assistant says: {text_value}"
                         print(response)
@@ -395,15 +389,15 @@ async def draw_insights(id: PydanticObjectId):
                         # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
                         # with open(response_file, 'w') as file:
                         #     file.write(response)
-                    elif content_item.type == 'image_file':
-                        file_id = content_item.image_file.file_id
-                        print(f"Attempting to download image file with ID: {file_id}")
-                        file_data = client.files.content(file_id)
-                        image_file = f"{file_id}.png"
-                        insights_file.insert(0, image_file)
-                        file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
-                        response = f"Assistant says: Saved image file to {file_path}"
-                        print(response)
+                    # elif content_item.type == 'image_file':
+                    #     file_id = content_item.image_file.file_id
+                    #     print(f"Attempting to download image file with ID: {file_id}")
+                    #     file_data = client.files.content(file_id)
+                    #     image_file = f"{file_id}.png"
+                    #     insights_file.insert(0, image_file)
+                    #     file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
+                    #     response = f"Assistant says: Saved image file to {file_path}"
+                    #     print(response)
                         # Save the response to a file
                         # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
                         # with open(response_file, 'w') as file:
@@ -422,39 +416,74 @@ async def draw_insights(id: PydanticObjectId):
                 # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
                 # with open(response_file, 'w') as file:
                 #     file.write(response)
+
+        update_data = dict(exclude_unset=True)
+        update_data["status"] = {
+            "current": "insights ready",
+            "message": res_message,
+            "insights": insights_file
+        }
+        
+        updated_analytic = await update_analytic_data(id, update_data)
+        print("updated_analytic: ", updated_analytic)
     else:
-        print(run.status)
-        print(run)
-        return {
-            "status_code": 404,
-            "response_type": "error",
-            "description": "An error occurred while processing { }".format(id),
-            "data": f"Result: {run.status} \n {run.last_error}",
-        }
+        print("=============run.status: ", run.status)
+        print("=============run.last_error.message: ", run.last_error.message)
+        # return {
+        #     "status_code": 429,
+        #     "response_type": "error",
+        #     "description": "An error occurred while processing {}".format(id),
+        #     "data": {"message":[f"Result: {run.status} \n {run.last_error.message}"]},
+        # }
 
+        update_data = dict(exclude_unset=True)
+        update_data["status"] = {
+            "current": "insights ready",
+            "message": [f"Result: {run.status} \n {run.last_error.message}"],
+        }
+        
+        updated_analytic = await update_analytic_data(id, update_data)
+        print("updated_analytic: ", updated_analytic)
+    # if updated_analytic:
+    #     return {
+    #         "status_code": 200,
+    #         "response_type": "success",
+    #         "data": {
+    #             "message": res_message,
+    #             "insights": insights_file
+    #         },
+    #         "description": f"Successfully draw insights"
+    #     }
+    # return {
+    #     "status_code": 500,
+    #     "response_type": "error",
+    #     "description": "An error occurred while updating {} analytic data. ".format(id),
+    #     "data": {
+    #             "message": "An error occurred while updating {} analytic data. ".format(id),
+    #         },
+    # }
+
+@router.post(
+    "/draw_insights/{id}",
+    response_description="load_data successfully",
+    response_model=Response,
+)
+async def draw_insights(id: PydanticObjectId, background_tasks: BackgroundTasks):
     update_data = dict(exclude_unset=True)
-    update_data["cleaned_file"] = cleaned_file
-    update_data["status"] = 'file loaded'
-    
-    updated_analytic = await update_analytic_data(id, update_data)
-
-    if updated_analytic:
-        return {
-            "status_code": 200,
-            "response_type": "success",
-            "data": {
-                "message": res_message,
-                "insights": insights_file
-            },
-            "description": f"Successfully draw insights"
-        }
-    return {
-        "status_code": 500,
-        "response_type": "error",
-        "description": "An error occurred while updating {} analytic data. ".format(id),
-        "data": False,
+    update_data["status"] = {
+        "current": "file loaded",
     }
-
+    
+    await update_analytic_data(id, update_data)
+    
+    background_tasks.add_task(handle_draw_insights, id)
+    
+    return {
+        "status_code": 200,
+        "response_type": "success",
+        "data": "Successfully started to draw insights",
+        "description": f"Successfully started to draw insights"
+    }
 
 ##########################################
 @router.post(
@@ -611,16 +640,16 @@ async def check_status(id: PydanticObjectId):
     analytic_row = await retrieve_analytic(id)
     status = analytic_row.status
 
-    if analytic_row:
+    if status:
          return {
             "status_code": 200,
             "response_type": "success",
             "data": status,
-            "description": f"Successfully uploaded"
+            "description": f"Successfully get status"
         }
     return {
         "status_code": 404,
         "response_type": "error",
-        "description": "An error occurred. Student with ID: {} not found".format(id),
-        "data": False,
+        "description": "An error occurred while getting status for {}".format(id),
+        "data": "An error occurred while getting status for {}".format(id),
     }
