@@ -308,6 +308,7 @@ async def handle_draw_insights(id: PydanticObjectId):
             ]
     )
     while(1):
+        print("~~~~While~~~~")
         run = client.beta.threads.runs.create_and_poll(
             thread_id=threadId,
             assistant_id=assistantId,
@@ -336,16 +337,16 @@ async def handle_draw_insights(id: PydanticObjectId):
                                         text_value += f"\nDownloaded CSV file: {file_name}"
                             response = f"Assistant says: {text_value}"
                             print(response)
-                        elif content_item.type == 'image_file':
-                            file_id = content_item.image_file.file_id
-                            print(f"Attempting to download image file with ID: {file_id}")
-                            file_data = client.files.content(file_id)
-                            image_file = f"{file_id}.png"
-                            if image_file not in insights_file:
-                                insights_file.insert(0, image_file)
-                                file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
-                            response = f"Assistant says: Saved image file to {file_path}"
-                            print(response)
+                        # elif content_item.type == 'image_file':
+                        #     file_id = content_item.image_file.file_id
+                        #     print(f"Attempting to download image file with ID: {file_id}")
+                        #     file_data = client.files.content(file_id)
+                        #     image_file = f"{file_id}.png"
+                        #     if image_file not in insights_file:
+                        #         insights_file.insert(0, image_file)
+                        #         file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
+                        #     response = f"Assistant says: Saved image file to {file_path}"
+                        #     print(response)
                         else:
                             response = "Assistant says: Unhandled content type."
                             print(response)
