@@ -28,7 +28,7 @@ class UpdateAnalyticModel(BaseModel):
 class Response(BaseModel):
     status_code: int
     response_type: str
-    description: str
+    description: Optional[Any]
     data: Optional[Any]
 
     class Config:

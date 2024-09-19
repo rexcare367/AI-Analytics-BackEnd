@@ -2,6 +2,7 @@ from fastapi import APIRouter, Body, File, UploadFile, BackgroundTasks
 from openai import OpenAI
 from datetime import datetime
 import boto3
+import pandas as pd
 
 from database.database import *
 from models.analytic import Analytic
@@ -131,6 +132,7 @@ async def handle_clean_file(id: PydanticObjectId):
 # retrieve analytic row
     analytic_row = await retrieve_analytic(id)
     
+    file_extension = os.path.splitext(analytic_row.origin_file)[1]
     threadId = analytic_row.threadId
     assistantId = analytic_row.assistantId
     cleaned_file=""
@@ -143,28 +145,26 @@ async def handle_clean_file(id: PydanticObjectId):
     content=[
             {
                 "type": "text",
-                "text": """
-                            You're given an xlsx or something other format file. Please convert that file to a .csv file for data analytics. Follow these steps:
+                "text": f"""
+                            You're given an {file_extension} file. Please create .csv file based on that file for data analytics. Follow these steps:
 
-                            1. Examine the first few rows to identify proper column names. Note that the first line is often not the header, and column names may be found in the second or third line.
-
-                            2. Maintain column names as close to the originals as possible.
-
-                            3. If a column name is missing but its fields follow a pattern (e.g., dates, numbers), assign a suitable name like “No” or “Date”.
-
-                            4. Adjust column names and split fields if needed:
-
-                              - Example: Column name: "HB", Field value: "HB: 35". Transform to Column name: "HB", Field value: "35".
-                              - Example: Column name: "HB / HCT", Field value: {"HB: 35, HCT: 20"}. Transform to Column name: "HB", Field value: "35" and Column name: "HCT", Field value: "20".
-                              - Example: Column name: "BMI (early/ pre-pregnancy)", Field value: "40.1 / 46.6". Transform to Column name: "BMI: early", Field value: "40.1" and Column name: "BMI: pre-pregnancy", Field value: "46.6".
+                            1. Load the {file_extension} file and create a new CSV file based on existing file.
+                                Examine the first few rows to identify proper column names. Note that the first line is often not the header, and column names may be found in the second or third line.
                             
-                            5. Ensure each column's data type matches its inferred column name.
+                                Maintain column names as close to the originals as possible.
+                                If a column name is missing but its fields follow a pattern (e.g., dates, numbers), assign a suitable name like 'No' or 'Date'.
+                                Adjust column names and split fields if needed:
 
-                            6 Translate all text to English and ensure all characters are in English.
-                            7 Standardize the data:
+                                - Example: Column name: "HB", Field value: "HB: 35". Transform to Column name: "HB", Field value: "35".
+                                - Example: Column name: "HB / HCT", Field value: {"HB: 35, HCT: 20"}. Transform to Column name: "HB", Field value: "35" and Column name: "HCT", Field value: "20".
+                                - Example: Column name: "BMI (early/ pre-pregnancy)", Field value: "40.1 / 46.6". Transform to Column name: "BMI: early", Field value: "40.1" and Column name: "BMI: pre-pregnancy", Field value: "46.6".
+                            
+                            2. Translate all mixed-text to English and ensure all characters are in English.
+
+                            3. Standardize the data:
                               - Ensure all values are consistent and correctly matched.
                               - Ensure all rows are converted.
-                            8. During conversion, use quotechar='"' and quoting=csv.QUOTE_NONNUMERIC to preserve quotation marks where needed.
+                            4. During conversion, use quotechar='"' and quoting=csv.QUOTE_NONNUMERIC to preserve quotation marks where needed.
                         """
             },
             # {
@@ -179,85 +179,78 @@ async def handle_clean_file(id: PydanticObjectId):
             # }
         ]
     )
+    while(1):
+        run = client.beta.threads.runs.create_and_poll(
+            thread_id=threadId,
+            assistant_id=assistantId,
+            instructions="Please answer the question is simpler english with an example."
+        )
 
-    run = client.beta.threads.runs.create_and_poll(
-        thread_id=threadId,
-        assistant_id=assistantId,
-        instructions="Please answer the question is simpler english with an example."
-    )
+        if run.status == 'completed':
+            print("Run completed successfully. Processing messages.")
+            messages = client.beta.threads.messages.list(thread_id=run.thread_id, run_id=run.id)
+            for msg in messages.data:
+                if msg.role == "assistant":
+                    for content_item in msg.content: 
+                        if content_item.type == 'text':
+                            text_value = content_item.text.value
+                            res_message.insert(0, text_value)
+                            if content_item.text.annotations:
+                                for annotation in content_item.text.annotations:
+                                    if annotation.type == 'file_path':
+                                        file_id = annotation.file_path.file_id
+                                        print(f"Attempting to download file with ID: {file_id}")
+                                        file_data = client.files.content(file_id)
+                                        cleaned_file = file_id
+                                        file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=f"{file_id}.csv",  Body=file_data.read())
+                                        text_value += f"\nDownloaded CSV file: {file_path}"
+                            response = f"Assistant says: {text_value}"
+                            print(response)
+                        else:
+                            response = "Assistant says: Unhandled content type."
+                            print(response)
+                else:
+                    response = f"User says: {msg.content}"
+                    print(f"Processing user message: {response}")
 
-    if run.status == 'completed':
-        print("Run completed successfully. Processing messages.")
-        messages = client.beta.threads.messages.list(thread_id=run.thread_id, run_id=run.id)
-        for msg in messages.data:
-            if msg.role == "assistant":
-                for content_item in msg.content: 
-                    if content_item.type == 'text':
-                        text_value = content_item.text.value
-                        res_message.insert(0, text_value)
-                        if content_item.text.annotations:
-                            for annotation in content_item.text.annotations:
-                                if annotation.type == 'file_path':
-                                    file_id = annotation.file_path.file_id
-                                    print(f"Attempting to download file with ID: {file_id}")
-                                    file_data = client.files.content(file_id)
-                                    cleaned_file = file_id
-                                    file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=f"{file_id}.csv",  Body=file_data.read())
-                                    text_value += f"\nDownloaded CSV file: {file_path}"
-                        response = f"Assistant says: {text_value}"
-                        print(response)
-                    else:
-                        response = "Assistant says: Unhandled content type."
-                        print(response)
-                        # Save the response to a file
-                        # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                        # with open(response_file, 'w') as file:
-                        #     file.write(response)
-            else:
-                response = f"User says: {msg.content}"
-                print(f"Processing user message: {response}")
-                # Save the response to a file
-                # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                # with open(response_file, 'w') as file:
-                #     file.write(response)
-
-        update_data = dict(exclude_unset=True)
-        update_data["status"] = {
+            update_data = dict(exclude_unset=True)
+            update_data["status"] = {
+                
+                "current": "cleaned",
+                "cleaned": {"status" : run.status, "message": ["Your file is successfully loaded and cleaned for data analytics and visualzation."], "description": res_message, "attachments": cleaned_file}
+            }
+            update_data["cleaned_file"] = cleaned_file
             
-            "current": "cleaned",
-            "cleaned": {"status" : run.status,"message": res_message, "attachments": cleaned_file}
-        }
-        update_data["cleaned_file"] = cleaned_file
-        
-        updated_analytic = await update_analytic_data(id, update_data)
-        print("updated_analytic: ", updated_analytic)
-    elif run.status == 'incomplete':
-        print("=============run.status: ", run.status)
-        print("=============run: ", run)
+            updated_analytic = await update_analytic_data(id, update_data)
+            print("updated_analytic: ", updated_analytic)
+            break
+        elif run.status == 'incomplete':
+            print("=============run.status: ", run.status)
+            print("=============run: ", run)
 
-        update_data = dict(exclude_unset=True)
-        update_data["status"] = {
+            # update_data = dict(exclude_unset=True)
+            # update_data["status"] = {
+            #     "current": "cleaned",
+            #     "cleaned": {"status" : run.status,"message": [f"Result: {run.status}"],"description": [f"Result: {run.status}"], "attachments": ""}
+            # }
+            # update_data["cleaned_file"] = ""
             
-            "current": "cleaned",
-            "cleaned": {"status" : run.status,"message": [f"Result: {run.status}"], "attachments": cleaned_file}
-        }
-        update_data["cleaned_file"] = ""
-        
-        updated_analytic = await update_analytic_data(id, update_data)
-        print("updated_analytic: ", updated_analytic)
-    else:
-        print("=============run.status: ", run.status)
-        print("=============run: ", run)
+            # updated_analytic = await update_analytic_data(id, update_data)
+            # print("updated_analytic: ", updated_analytic)
+        else:
+            print("=============run.status: ", run.status)
+            print("=============run: ", run)
 
-        update_data = dict(exclude_unset=True)
-        update_data["status"] = {
-            "current": "cleaned",
-            "cleaned": {"status" : run.status,"message": [f"Result: {run.status} \n {run.last_error.message}"], "attachments": cleaned_file}
-        }
-        update_data["cleaned_file"] = ""
-        
-        updated_analytic = await update_analytic_data(id, update_data)
-        print("updated_analytic: ", updated_analytic)
+            update_data = dict(exclude_unset=True)
+            update_data["status"] = {
+                "current": "cleaned",
+                "cleaned": {"status" : run.status,"message":  [f"Result: {run.status} \n {run.last_error.message}"],"description": [f"Result: {run.status} \n {run.last_error.message}"], "attachments": ""}
+            }
+            update_data["cleaned_file"] = ""
+            
+            updated_analytic = await update_analytic_data(id, update_data)
+            print("updated_analytic: ", updated_analytic)
+            break
 
 @router.post(
     "/clean_file/{id}",
@@ -291,7 +284,7 @@ async def handle_draw_insights(id: PydanticObjectId):
     assistantId = analytic_row.assistantId
     print(f"threadId: {threadId}, assistantId: {assistantId}")
     res_message=[]
-    insights_file=[]    
+    insights_file=[]
     
     message = client.beta.threads.messages.create(
         thread_id=threadId,
@@ -303,111 +296,101 @@ async def handle_draw_insights(id: PydanticObjectId):
                                 I am planning to develop a data analytics platform that features advanced charts and graphs.
 
                                 To begin:
-
-                                Formulate 4 complex questions that are needed to draw insights then provide detailed solutions.
+                               
+                               Formulate 2 complex questions that are needed to draw insights then provide detailed solutions.
                                 Generate visual insights (width: 1000px, height: 600px) based on these questions and save them as image files.
 
-                                - one should be group of 1 pie chart and 1 line chart
-                                - one should be groupd of 2 chart combined with line and bar
-                                - other 2 should be something other graphs such as sunburst, violin, tree, prisma flow chart, geomap.
+                                - one image should be group of 1 pie chart and 1 line chart or group of 2 chart combined with line and bar
+                                - other 1 should be something other graphs such as sunburst, violin, tree, prisma flow chart, geomap.
+                                                                
                             """
                 },
             ]
     )
+    while(1):
+        run = client.beta.threads.runs.create_and_poll(
+            thread_id=threadId,
+            assistant_id=assistantId,
+            instructions="Please answer the question is simpler english with an example."
+        )
 
-    run = client.beta.threads.runs.create_and_poll(
-        thread_id=threadId,
-        assistant_id=assistantId,
-        instructions="Please answer the question is simpler english with an example."
-    )
+        if run.status == 'completed':
+            print("Run completed successfully. Processing messages.")
+            messages = client.beta.threads.messages.list(thread_id=run.thread_id, run_id=run.id)
+            for msg in messages.data:
+                if msg.role == "assistant":
+                    for content_item in msg.content:
+                        if content_item.type == 'text':
+                            text_value = content_item.text.value
+                            res_message.insert(0, text_value)
+                            if content_item.text.annotations:
+                                for annotation in content_item.text.annotations:
+                                    if annotation.type == 'file_path':
+                                        file_id = annotation.file_path.file_id
+                                        print(f"Attempting to download file with ID: {file_id}")
+                                        file_data = client.files.content(file_id)
+                                        image_file = f"{file_id}.png"
+                                        file_name = os.path.abspath( f"{file_id}.csv")
+                                        file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
+                                        insights_file.insert(0, image_file)
+                                        text_value += f"\nDownloaded CSV file: {file_name}"
+                            response = f"Assistant says: {text_value}"
+                            print(response)
+                        elif content_item.type == 'image_file':
+                            file_id = content_item.image_file.file_id
+                            print(f"Attempting to download image file with ID: {file_id}")
+                            file_data = client.files.content(file_id)
+                            image_file = f"{file_id}.png"
+                            if image_file not in insights_file:
+                                insights_file.insert(0, image_file)
+                                file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
+                            response = f"Assistant says: Saved image file to {file_path}"
+                            print(response)
+                        else:
+                            response = "Assistant says: Unhandled content type."
+                            print(response)
+                else:
+                    response = f"User says: {msg.content}"
+                    print(f"Processing user message: {response}")
 
-    if run.status == 'completed':
-        print("Run completed successfully. Processing messages.")
-        messages = client.beta.threads.messages.list(thread_id=run.thread_id, run_id=run.id)
-        for msg in messages.data:
-            if msg.role == "assistant":
-                for content_item in msg.content:
-                    if content_item.type == 'text':
-                        text_value = content_item.text.value
-                        res_message.insert(0, text_value)
-                        if content_item.text.annotations:
-                            for annotation in content_item.text.annotations:
-                                if annotation.type == 'file_path':
-                                    file_id = annotation.file_path.file_id
-                                    print(f"Attempting to download file with ID: {file_id}")
-                                    file_data = client.files.content(file_id)
-                                    image_file = f"{file_id}.png"
-                                    file_name = os.path.abspath( f"{file_id}.csv")
-                                    file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
-                                    insights_file.insert(0, image_file)
-                                    text_value += f"\nDownloaded CSV file: {file_name}"
-                        response = f"Assistant says: {text_value}"
-                        print(response)
-                        # Save the response to a file
-                        # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                        # with open(response_file, 'w') as file:
-                        #     file.write(response)
-                    # elif content_item.type == 'image_file':
-                    #     file_id = content_item.image_file.file_id
-                    #     print(f"Attempting to download image file with ID: {file_id}")
-                    #     file_data = client.files.content(file_id)
-                    #     image_file = f"{file_id}.png"
-                    #     insights_file.insert(0, image_file)
-                    #     file_path = S3_CLIENT.put_object(Bucket=S3_PUBLIC_BUCKET, Key=image_file,  Body=file_data.read())
-                    #     response = f"Assistant says: Saved image file to {file_path}"
-                    #     print(response)
-                        # Save the response to a file
-                        # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                        # with open(response_file, 'w') as file:
-                        #     file.write(response)
-                    else:
-                        response = "Assistant says: Unhandled content type."
-                        print(response)
-                        # Save the response to a file
-                        # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                        # with open(response_file, 'w') as file:
-                        #     file.write(response)
-            else:
-                response = f"User says: {msg.content}"
-                print(f"Processing user message: {response}")
-                # Save the response to a file
-                # response_file = os.path.abspath( f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                # with open(response_file, 'w') as file:
-                #     file.write(response)
+            update_data = dict(exclude_unset=True)
+                    
+            _status = analytic_row.status
+            _status["current"] = "insights ready"
+            _status["message"] =  ["Insights are drawn based on your file"]
+            _status["description"] =  res_message
+            _status["insights"] =  insights_file
+            update_data["status"] = _status
+            
+            updated_analytic = await update_analytic_data(id, update_data)
+            print("updated_analytic: ", updated_analytic)
+            break
+        elif run.status == 'incomplete':
+            print("=============run.status: ", run.status)
+            print("=============run: ", run)
+            # update_data = dict(exclude_unset=True)
+            # _status = analytic_row.status
+            # _status["current"] = "insights ready"
+            # _status["message"] =  [f"Result: {run.status}"]
+            # _status["description"] =  [f"Result: {run.status}"]
+            # update_data["status"] = _status
+            
+            # updated_analytic = await update_analytic_data(id, update_data)
+            # print("updated_analytic: ", updated_analytic)
+        else:
+            print("=============run.status: ", run.status)
+            print("=============run.last_error.message: ", run.last_error.message)
 
-        update_data = dict(exclude_unset=True)
-                
-        _status = analytic_row.status
-        _status["current"] = "insights ready"
-        _status["message"] =  res_message
-        _status["insights"] =  insights_file
-        update_data["status"] = _status
-        
-        updated_analytic = await update_analytic_data(id, update_data)
-        print("updated_analytic: ", updated_analytic)
-    elif run.status == 'incomplete':
-        print("=============run.status: ", run.status)
-        print("=============run: ", run)
-        update_data = dict(exclude_unset=True)
-        _status = analytic_row.status
-        _status["current"] = "insights ready"
-        _status["message"] =  [f"Result: {run.status}"]
-        update_data["status"] = _status
-        
-        updated_analytic = await update_analytic_data(id, update_data)
-        print("updated_analytic: ", updated_analytic)
-    else:
-        print("=============run.status: ", run.status)
-        print("=============run.last_error.message: ", run.last_error.message)
-
-        update_data = dict(exclude_unset=True)
-        _status = analytic_row.status
-        _status["current"] = "insights ready"
-        _status["message"] = [f"Result: {run.status} \n {run.last_error.message}"]
-        update_data["status"] = _status
-        
-        updated_analytic = await update_analytic_data(id, update_data)
-        print("updated_analytic: ", updated_analytic)
+            update_data = dict(exclude_unset=True)
+            _status = analytic_row.status
+            _status["current"] = "insights ready"
+            _status["message"] = [f"Result: {run.status} \n {run.last_error.message}"]
+            _status["description"] = [f"Result: {run.status} \n {run.last_error.message}"]
+            update_data["status"] = _status
+            
+            updated_analytic = await update_analytic_data(id, update_data)
+            print("updated_analytic: ", updated_analytic)
+            break
 
 @router.post(
     "/draw_insights/{id}",
@@ -590,13 +573,16 @@ async def draw_graphs(id: PydanticObjectId):
 async def check_status(id: PydanticObjectId):
     analytic_row = await retrieve_analytic(id)
     status = analytic_row.status
-
+    headdata = None
+    if analytic_row.cleaned_file:
+        product_sales_data = pd.read_csv(f"https://theorekabucket.s3.eu-north-1.amazonaws.com/{analytic_row.cleaned_file}.csv")
+        headdata = product_sales_data.head().to_dict(orient="records")
     if status:
          return {
             "status_code": 200,
             "response_type": "success",
             "data": status,
-            "description": f"Successfully get status"
+            "description": headdata
         }
     return {
         "status_code": 404,
